@@ -95,6 +95,12 @@ def eval_ece_by_dim(test_x, test_y, model, plot_func=None):
                 err = np.mean(np.abs(cdf - np.linspace(0, 1, cdf.shape[0])))
 
                 if err > max_err:
+                    cdf = model.eval_all(test_x_part, test_y_part)[0].cpu().numpy()[:, 0]
+                    cdf = np.sort(cdf)
+
+                    # Compute calibration error
+                    err = np.mean(np.abs(cdf - np.linspace(0, 1, cdf.shape[0])))
+
                     max_err = err
                     worst_cdf = cdf
                     worst_dim = [i, k]
