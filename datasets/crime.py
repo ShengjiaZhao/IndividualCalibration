@@ -51,7 +51,8 @@ class CrimeDataset(Dataset):
 
     def train_batch(self, batch_size=None):
         if batch_size is None:
-            batch_size = self.train_features.shape[0] - self.train_ptr
+            batch_size = self.train_features.shape[0]
+            self.train_ptr = 0
         if self.train_ptr + batch_size > self.train_features.shape[0]:
             self.train_ptr = 0
         bx, by = self.train_features[self.train_ptr:self.train_ptr+batch_size], \
@@ -63,7 +64,8 @@ class CrimeDataset(Dataset):
 
     def test_batch(self, batch_size=None):
         if batch_size is None:
-            batch_size = self.test_features.shape[0] - self.test_ptr
+            batch_size = self.test_features.shape[0]
+            self.train_ptr = 0
         if self.test_ptr + batch_size > self.test_features.shape[0]:
             self.test_ptr = 0
         bx, by = self.test_features[self.test_ptr:self.test_ptr+batch_size], \

@@ -25,10 +25,11 @@ size_ratio: the proportion of samples to select a sub-group
 def eval_ece(test_x, test_y, model, size_ratio, plot_func=None):
     size = int(test_x.shape[0] * size_ratio)
     cdf_list = []
-    for i in range(200):
+    for i in range(2000):
         with torch.no_grad():
-            cdf = model.eval_all(test_x, test_y)[0]
-            cdf_list.append(cdf)
+            cdf = model.eval_all(test_x, test_y)[0].cpu().numpy().astype(np.float)
+            cdf = model.apply_recalibrate(cdf)
+            cdf_list.append(torch.from_numpy(cdf).float())
 
     cdf_avg = torch.cat(cdf_list, axis=1).mean(axis=1)
 
@@ -89,6 +90,7 @@ def eval_ece_by_dim(test_x, test_y, model, plot_func=None):
 
             with torch.no_grad():
                 cdf = model.eval_all(test_x_part, test_y_part)[0].cpu().numpy()[:, 0]
+                cdf = model.apply_recalibrate(cdf)
                 cdf = np.sort(cdf)
 
                 # Compute calibration error
