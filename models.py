@@ -16,7 +16,9 @@ class FcSmall(nn.Module):
         self.fc4 = nn.Linear(100, 2)
         self.iso_transform = None
 
-    def forward(self, bx, br):
+    def forward(self, bx, br=None):
+        if br is None:
+            br = torch.rand(bx.shape[0], 1, device=bx.device)
         h = F.leaky_relu(self.fc1(bx))
         h = torch.cat([h, br], dim=1)
         h = F.leaky_relu(self.fc2(h))
@@ -25,7 +27,7 @@ class FcSmall(nn.Module):
         h = self.drop3(h)
         h = self.fc4(h)
         mean = h[:, 0:1]
-        stddev = torch.sigmoid(h[:, 1:2]) * 10.0 + 0.01
+        stddev = torch.sigmoid(h[:, 1:2]) * 5.0 + 0.01
         return mean, stddev
 
     def eval_all(self, bx, by):
@@ -35,26 +37,32 @@ class FcSmall(nn.Module):
         cdf = 0.5 * (1.0 + torch.erf((by - mean) / stddev / math.sqrt(2)))
 
         loss_cdf = torch.abs(cdf - br).mean()
-        loss_cdf_kl = cdf * (torch.log(cdf + eps) - torch.log(br + eps)) + \
-                      (1 - cdf) * (torch.log(1 - cdf + eps) - torch.log(1 - br + eps))
-        loss_cdf_kl = loss_cdf_kl.mean()
+        # loss_cdf_kl = cdf * (torch.log(cdf + eps) - torch.log(br + eps)) + \
+        #               (1 - cdf) * (torch.log(1 - cdf + eps) - torch.log(1 - br + eps))
+        # loss_cdf_kl = loss_cdf_kl.mean()
         loss_stddev = stddev.mean()
-        loss_center = torch.abs(mean - by).mean()
+        # loss_center = torch.abs(mean - by).mean()
 
         # Log likelihood of by under the predicted Gaussian distribution
-        loss_ll = torch.log(stddev) + math.log(2 * math.pi) / 2.0 + (((by - mean) / stddev) ** 2 / 2.0)
-        loss_ll = loss_ll.mean()
+        loss_nll = torch.log(stddev) + math.log(2 * math.pi) / 2.0 + (((by - mean) / stddev) ** 2 / 2.0)
+        loss_nll = loss_nll.mean()
 
-        return cdf, loss_cdf, loss_cdf_kl, loss_stddev, loss_center, loss_ll
+        return cdf, loss_cdf, loss_stddev, loss_nll
 
     def recalibrate(self, bx, by):
         with torch.no_grad():
             cdf = self.eval_all(bx, by)[0].cpu().numpy()[:, 0].astype(np.float)
 
         cdf = np.sort(cdf)
+        lin = np.linspace(0, 1, int(cdf.shape[0]))
 
-        self.iso_transform = IsotonicRegression(out_of_bounds='clip')
-        self.iso_transform.fit_transform(cdf, np.linspace(0, 1, int(cdf.shape[0])))
+        # Insert an extra 0 and 1 to ensure the range is always [0, 1], and trim CDF for numerical stability
+        cdf = np.clip(cdf, a_max=1.0-1e-6, a_min=1e-6)
+        cdf = np.insert(np.insert(cdf, -1, 1), 0, 0)
+        lin = np.insert(np.insert(lin, -1, 1), 0, 0)
+
+        self.iso_transform = IsotonicRegression()
+        self.iso_transform.fit_transform(cdf, lin)
 
     def apply_recalibrate(self, cdf):
         if self.iso_transform is not None:

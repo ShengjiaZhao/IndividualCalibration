@@ -2,10 +2,11 @@ import numpy as np
 from matplotlib import pyplot as plt
 import os
 from datasets.base import *
+import torch
 
 
 class CrimeDataset(Dataset):
-    def __init__(self):
+    def __init__(self, device):
         Dataset.__init__(self)
 
         reader = open(os.path.join(os.path.dirname(os.path.realpath(__file__)), 'data/communities.data'))
@@ -48,6 +49,7 @@ class CrimeDataset(Dataset):
 
         self.train_size = self.train_features.shape[0]
         self.test_size = self.test_features.shape[0]
+        self.device = device
 
     def train_batch(self, batch_size=None):
         if batch_size is None:
@@ -60,7 +62,7 @@ class CrimeDataset(Dataset):
         self.train_ptr += batch_size
         if self.train_ptr == self.train_features.shape[0]:
             self.train_ptr = 0
-        return bx, by
+        return torch.from_numpy(bx).float().to(self.device), torch.from_numpy(by).float().to(self.device)
 
     def test_batch(self, batch_size=None):
         if batch_size is None:
@@ -73,7 +75,7 @@ class CrimeDataset(Dataset):
         self.test_ptr += batch_size
         if self.test_ptr == self.test_features.shape[0]:
             self.test_ptr = 0
-        return bx, by
+        return torch.from_numpy(bx).float().to(self.device), torch.from_numpy(by).float().to(self.device)
 
 
 if __name__ == '__main__':

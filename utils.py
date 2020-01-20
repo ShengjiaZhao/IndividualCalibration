@@ -1,19 +1,12 @@
 from datasets import *
 import torch
-import torch.nn as nn
-import torch.nn.functional as F
-import torch.optim as optim
-from torch.utils.tensorboard import SummaryWriter
-import torchvision
-import numbers, math
-import numpy as np
-import skimage
-from matplotlib import pyplot as plt
-import os, math
 import io
 import PIL.Image
 from torchvision.transforms import ToTensor
-
+import numpy as np
+from matplotlib import pyplot as plt
+from scipy.stats import norm
+from scipy.interpolate import interp1d
 
 # Compute the calibration error on the worst subset of samples
 # y: an array of y values
@@ -22,10 +15,10 @@ from torchvision.transforms import ToTensor
 test_x: a tensor of shape [batch_size, x_dim]
 size_ratio: the proportion of samples to select a sub-group
 """
-def eval_ece(test_x, test_y, model, size_ratio, plot_func=None):
+def eval_ece(test_x, test_y, model, size_ratio, resolution=2000, plot_func=None):
     size = int(test_x.shape[0] * size_ratio)
     cdf_list = []
-    for i in range(2000):
+    for i in range(resolution):
         with torch.no_grad():
             cdf = model.eval_all(test_x, test_y)[0].cpu().numpy().astype(np.float)
             cdf = model.apply_recalibrate(cdf)
@@ -68,9 +61,35 @@ def eval_ece(test_x, test_y, model, size_ratio, plot_func=None):
     return err_s, err_l
 
 
-# Evaluate the empirical standard deviation of the predicted distributions
+# Evaluate the standard deviation of the predicted distributions with Monte Carlo
 def eval_stddev(test_x, model):
-    pass
+    with torch.no_grad():
+        mean_batch, stddev_batch = model(test_x)
+        mean_batch = mean_batch.cpu().numpy().astype(np.float)
+        stddev_batch = stddev_batch.cpu().numpy().astype(np.float)
+
+    # if model.iso_transform is None:
+    #     return np.mean(stddev_batch)
+    #
+    stddevs = []
+    for mean, stddev in zip(mean_batch, stddev_batch):
+        # Compute the CDF (represent it by its values between [x-10stddev, x+10stddev])
+        # This code could fail if we sample beyond 10x stddev, but that is so unlikely
+        # Also we use 10000 samples, but I'm sure the error is negligible
+        xs = np.linspace(mean - 10 * stddev, mean + 10 * stddev, 10000)
+        ys = norm.cdf((xs - mean) / stddev)
+        ys_new = model.apply_recalibrate(ys)
+
+        # Compute approximate inverse CDF
+        f = interp1d(ys_new, xs, kind='linear')
+
+        # Draw samples from the distribution by inverse CDF trick
+        r = np.random.random(size=(10000,))
+        fr = f(r)
+
+        # Compute empirical stddev
+        stddevs.append(np.std(fr))
+    return np.mean(stddevs)
 
 
 # Compute the worst ECE if we break the data into two groups based on ranking in top x% of each individual feature
