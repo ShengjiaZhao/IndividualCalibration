@@ -53,7 +53,7 @@ class FcSmall(nn.Module):
 
         cdf = np.sort(cdf)
 
-        self.iso_transform = IsotonicRegression()
+        self.iso_transform = IsotonicRegression(out_of_bounds='clip')
         self.iso_transform.fit_transform(cdf, np.linspace(0, 1, int(cdf.shape[0])))
 
     def apply_recalibrate(self, cdf):

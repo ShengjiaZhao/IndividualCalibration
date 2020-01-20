@@ -29,13 +29,13 @@ def eval_ece(test_x, test_y, model, size_ratio, plot_func=None):
         with torch.no_grad():
             cdf = model.eval_all(test_x, test_y)[0].cpu().numpy().astype(np.float)
             cdf = model.apply_recalibrate(cdf)
-            cdf_list.append(torch.from_numpy(cdf).float())
+            cdf_list.append(cdf)
 
-    cdf_avg = torch.cat(cdf_list, axis=1).mean(axis=1)
+    cdf_avg = np.mean(np.concatenate(cdf_list, axis=1), axis=1)
 
     # Smallest elements
-    elem = torch.argsort(cdf_avg)[:size]
-    cdf_s = cdf_list[-1][elem].cpu().numpy()[:, 0]
+    elem = np.argsort(cdf_avg)[:size]
+    cdf_s = cdf_list[-1][elem][:, 0]
     cdf_s = np.sort(cdf_s)
 
     # Compute calibration error
@@ -48,8 +48,8 @@ def eval_ece(test_x, test_y, model, size_ratio, plot_func=None):
         plt.plot(np.linspace(0, 1, cdf_s.shape[0]), np.linspace(0, 1, cdf_s.shape[0]))
 
     # Smallest elements
-    elem = torch.argsort(cdf_avg, descending=True)[:size]
-    cdf_l = cdf_list[-1][elem].cpu().numpy()[:, 0]
+    elem = np.argsort(cdf_avg)[-size:]
+    cdf_l = cdf_list[-1][elem][:, 0]
     cdf_l = np.sort(cdf_l)
 
     # Compute calibration error
@@ -66,6 +66,11 @@ def eval_ece(test_x, test_y, model, size_ratio, plot_func=None):
         plt.close()
 
     return err_s, err_l
+
+
+# Evaluate the empirical standard deviation of the predicted distributions
+def eval_stddev(test_x, model):
+    pass
 
 
 # Compute the worst ECE if we break the data into two groups based on ranking in top x% of each individual feature
