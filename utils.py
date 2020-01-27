@@ -8,6 +8,48 @@ from matplotlib import pyplot as plt
 from scipy.stats import norm
 from scipy.interpolate import interp1d
 
+
+# Compute decision risk
+# If delta is None, brute force search for best delta. Otherwise use 1-delta as the decision threshold
+def compute_risk(test_x, test_y, model, loss_func, thresh, delta=None, plot_func=None):
+    thresh_y = torch.ones_like(test_y) * thresh
+
+    with torch.no_grad():
+        cdf = model.eval_all(test_x, thresh_y)[0]
+
+    if delta is None:
+        vals = np.linspace(0.9, 1.0, 100)
+        losses = []
+        for val in vals:
+            a = (cdf < val).float()
+            loss = loss_func(test_y, a)
+            losses.append(loss.mean().cpu())
+        return np.min(np.array(losses)), 1-vals[np.argmin(np.array(losses))]
+    else:
+        a = (cdf < 1. - delta).float()
+        loss = loss_func(test_y, a)
+        if plot_func is not None:
+            num_bins = 10
+            bins = np.linspace(0, 1, num_bins+1)
+            losses = []
+            for i in range(num_bins):
+                losses.append(float(loss[(test_y > bins[i]) & (test_y <= bins[i+1])].mean().cpu().numpy()))
+                if np.isnan(losses[-1]):
+                    losses[-1] = 0.0
+            plt.plot(bins[:-1], losses)
+            # plt.scatter(test_y.cpu().numpy().flatten(), loss.cpu().numpy().flatten(), alpha=0.2)
+            # plt.yscale('log')
+            # plt.ylim([0.001, 100])
+            buf = io.BytesIO()
+            plt.savefig(buf, format='jpeg')
+            buf.seek(0)
+            image = PIL.Image.open(buf)
+            image = ToTensor()(image)
+            plot_func(image)
+            plt.close()
+        return float(loss.mean().cpu()), delta
+
+
 # Compute the calibration error on the worst subset of samples
 # y: an array of y values
 # size: a number in (0, 1], the fraction of the validation set to include in the evaluation

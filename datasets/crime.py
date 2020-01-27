@@ -6,8 +6,8 @@ import torch
 
 
 class CrimeDataset(Dataset):
-    def __init__(self, device):
-        Dataset.__init__(self)
+    def __init__(self, device=torch.device('cpu')):
+        Dataset.__init__(self, device)
 
         reader = open(os.path.join(os.path.dirname(os.path.realpath(__file__)), 'data/communities.data'))
 
@@ -43,39 +43,120 @@ class CrimeDataset(Dataset):
         self.test_features = attributes[:val_size:, selected]
         self.names = names[selected]
 
-        self.train_ptr = 0
-        self.test_ptr = 0
         self.x_dim = self.train_features.shape[1]
 
-        self.train_size = self.train_features.shape[0]
-        self.test_size = self.test_features.shape[0]
-        self.device = device
+    # Compute the worst ECE if we break the data into two groups based on ranking in top x% of each individual feature
+    def eval_ece_by_dim(self, test_x, test_y, model, plot_func=None):
+        size = int(test_x.shape[0])
+        size_lb = size // 3
+        size_ub = size - size_lb
+        num_feat = int(test_x.shape[1])
+        mid_point = [torch.sort(test_x[:, i])[0][size // 2] for i in range(num_feat)]
 
-    def train_batch(self, batch_size=None):
-        if batch_size is None:
-            batch_size = self.train_features.shape[0]
-            self.train_ptr = 0
-        if self.train_ptr + batch_size > self.train_features.shape[0]:
-            self.train_ptr = 0
-        bx, by = self.train_features[self.train_ptr:self.train_ptr+batch_size], \
-                 self.train_labels[self.train_ptr:self.train_ptr+batch_size]
-        self.train_ptr += batch_size
-        if self.train_ptr == self.train_features.shape[0]:
-            self.train_ptr = 0
-        return torch.from_numpy(bx).float().to(self.device), torch.from_numpy(by).float().to(self.device)
+        max_err = -1
+        worst_cdf = None
+        worst_dim = None
+        for i in range(num_feat):
+            index1 = test_x[:, i] > mid_point[i]
+            index2 = test_x[:, i] <= mid_point[i]
 
-    def test_batch(self, batch_size=None):
-        if batch_size is None:
-            batch_size = self.test_features.shape[0]
-            self.train_ptr = 0
-        if self.test_ptr + batch_size > self.test_features.shape[0]:
-            self.test_ptr = 0
-        bx, by = self.test_features[self.test_ptr:self.test_ptr+batch_size], \
-                 self.test_labels[self.test_ptr:self.test_ptr+batch_size]
-        self.test_ptr += batch_size
-        if self.test_ptr == self.test_features.shape[0]:
-            self.test_ptr = 0
-        return torch.from_numpy(bx).float().to(self.device), torch.from_numpy(by).float().to(self.device)
+            for k, index in enumerate([index1, index2]):
+                test_x_part, test_y_part = test_x[index], test_y[index]
+                if test_x_part.shape[0] < size_lb or test_x_part.shape[0] > size_ub:
+                    continue
+
+                with torch.no_grad():
+                    cdf = model.eval_all(test_x_part, test_y_part)[0].cpu().numpy()[:, 0]
+                    cdf = model.apply_recalibrate(cdf)
+                    cdf = np.sort(cdf)
+
+                    # Compute calibration error
+                    err = np.mean(np.abs(cdf - np.linspace(0, 1, cdf.shape[0])))
+
+                    if err > max_err:
+                        cdf = model.eval_all(test_x_part, test_y_part)[0].cpu().numpy()[:, 0]
+                        cdf = np.sort(cdf)
+
+                        # Compute calibration error
+                        err = np.mean(np.abs(cdf - np.linspace(0, 1, cdf.shape[0])))
+
+                        max_err = err
+                        worst_cdf = cdf
+                        worst_dim = [i, k]
+
+        # Get calibration curve
+        if plot_func is not None:
+            plt.figure(figsize=(3, 3))
+            plt.plot(worst_cdf, np.linspace(0, 1, worst_cdf.shape[0]))
+            plt.plot(np.linspace(0, 1, worst_cdf.shape[0]), np.linspace(0, 1, worst_cdf.shape[0]))
+            buf = io.BytesIO()
+            plt.savefig(buf, format='jpeg')
+            buf.seek(0)
+            image = PIL.Image.open(buf)
+            image = ToTensor()(image)
+            plot_func(image)
+            plt.close()
+
+        return max_err, worst_dim
+
+    # Compute the worst ECE if we break the data into two groups based on ranking in top x% of each individual feature
+    def eval_ece_by_2dim(test_x, test_y, model, plot_func=None):
+        size = int(test_x.shape[0])
+        size_lb = size // 4
+        size_ub = size - size_lb
+
+        num_feat = int(test_x.shape[1])
+        mid_point = [torch.sort(test_x[:, i])[0][size // 2] for i in range(num_feat)]
+
+        max_err = -1
+        worst_cdf = None
+        worst_dim = None
+        for i in range(num_feat):
+            for j in range(i + 1, num_feat):
+                index1 = (test_x[:, i] > mid_point[i]) & (test_x[:, j] > mid_point[j])
+                index2 = (test_x[:, i] > mid_point[i]) & (test_x[:, j] <= mid_point[j])
+                index3 = (test_x[:, i] <= mid_point[i]) & (test_x[:, j] > mid_point[j])
+                index4 = (test_x[:, i] <= mid_point[i]) & (test_x[:, j] <= mid_point[j])
+
+                for k, index in enumerate([index1, index2, index3, index4]):
+                    test_x_part, test_y_part = test_x[index], test_y[index]
+                    if test_x_part.shape[0] < size_lb or test_x_part.shape[0] > size_ub:
+                        continue
+
+                    with torch.no_grad():
+                        cdf = model.eval_all(test_x_part, test_y_part)[0].cpu().numpy()[:, 0]
+                        cdf = np.sort(cdf)
+
+                        # Compute calibration error
+                        err = np.mean(np.abs(cdf - np.linspace(0, 1, cdf.shape[0])))
+
+                        if err > max_err:
+                            # Re-evaluate to prevent over-fitting
+                            cdf = model.eval_all(test_x_part, test_y_part)[0].cpu().numpy()[:, 0]
+                            cdf = np.sort(cdf)
+
+                            # Compute calibration error
+                            err = np.mean(np.abs(cdf - np.linspace(0, 1, cdf.shape[0])))
+
+                            max_err = err
+                            worst_cdf = cdf
+                            worst_dim = [i, j, k]
+
+        # Get calibration curve
+        if plot_func is not None:
+            plt.figure(figsize=(3, 3))
+            plt.plot(worst_cdf, np.linspace(0, 1, worst_cdf.shape[0]))
+            plt.plot(np.linspace(0, 1, worst_cdf.shape[0]), np.linspace(0, 1, worst_cdf.shape[0]))
+            buf = io.BytesIO()
+            plt.savefig(buf, format='jpeg')
+            buf.seek(0)
+            image = PIL.Image.open(buf)
+            image = ToTensor()(image)
+            plot_func(image)
+            plt.close()
+
+        return max_err, worst_dim
+
 
 
 if __name__ == '__main__':
@@ -83,5 +164,7 @@ if __name__ == '__main__':
     print(dataset.names)
     print(dataset.train_features.shape, dataset.train_labels.shape)
 
+    plt.hist(dataset.test_labels, bins=20)
+    plt.show()
 
 
