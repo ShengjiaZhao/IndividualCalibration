@@ -9,17 +9,34 @@ class TrafficDataset(Dataset):
         Dataset.__init__(self, device)
 
         reader = np.load(os.path.join(os.path.dirname(os.path.realpath(__file__)), 'data/traffic_train.npz'))
-        self.train_features, self.train_labels = self.preprocess(reader)
-        self.train_c = reader['c']
+        features, labels = self.preprocess(reader)
 
-        # random_perm = np.random.permutation(range(self.train_features.shape[0]))
-        # attributes = attributes[, :]
+        reader2 = np.load(os.path.join(os.path.dirname(os.path.realpath(__file__)), 'data/traffic_test.npz'))
+        features2, labels2 = self.preprocess(reader2)
+
+        features = np.concatenate([features, features2], axis=0)
+        labels = np.concatenate([labels, labels2], axis=0)
+        c = np.concatenate([reader['c'], reader2['c']], axis=0)
+
+        # Random train/test split
+        random_perm = np.random.permutation(range(features.shape[0]))
+        features = features[random_perm]
+        labels = labels[random_perm]
+        c = c[random_perm]
+
+        test_size = 3000
+        self.train_features, self.test_features = features[:-test_size], features[-test_size:]
+        self.train_labels, self.test_labels = labels[:-test_size], labels[-test_size:]
+        self.train_c, self.test_c = c[:-test_size], c[-test_size:]
+
+        # self.train_features, self.train_labels = self.preprocess(reader)
+        # self.train_c = reader['c']
 
         # self.train_labels += np.random.normal(0, 0.005, self.train_labels.shape)
 
-        reader = np.load(os.path.join(os.path.dirname(os.path.realpath(__file__)), 'data/traffic_test.npz'))
-        self.test_features, self.test_labels = self.preprocess(reader)
-        self.test_c = reader['c']
+        # reader = np.load(os.path.join(os.path.dirname(os.path.realpath(__file__)), 'data/traffic_test.npz'))
+        # self.test_features, self.test_labels = self.preprocess(reader)
+        # self.test_c = reader['c']
 
         if fc is True:
             self.train_features = np.reshape(self.train_features, [-1, 32*32])
@@ -44,14 +61,15 @@ class TrafficDataset(Dataset):
     # If delta is None, brute force search for best delta. Otherwise use 1-delta as the decision threshold
     def compute_risk(self, model, loss_func, thresh, delta=0.05, plot_func=None, val=True):
         test_x_all, test_y_all = self.test_batch()
-        if val is True:
-            test_x_all = test_x_all[:2000]
-            test_y_all = test_y_all[:2000]
-            test_c = self.test_c[:2000]
-        else:
-            test_x_all = test_x_all[2000:]
-            test_y_all = test_y_all[2000:]
-            test_c = self.test_c[2000:]
+        test_c = self.test_c
+        # if val is True:
+        #     test_x_all = test_x_all[:2000]
+        #     test_y_all = test_y_all[:2000]
+        #     test_c = self.test_c[:2000]
+        # else:
+        #     test_x_all = test_x_all[2000:]
+        #     test_y_all = test_y_all[2000:]
+        #     test_c = self.test_c[2000:]
 
         losses = []
         for group in range(16):
@@ -89,14 +107,16 @@ class TrafficDataset(Dataset):
     """
     def compute_ece_group(self, model, group=None, plot_func=None, val=True):
         test_x, test_y = self.test_batch()
-        if val is True:
-            test_x = test_x[:2000]
-            test_y = test_y[:2000]
-            test_c = self.test_c[:2000]
-        else:
-            test_x = test_x[2000:]
-            test_y = test_y[2000:]
-            test_c = self.test_c[2000:]
+        test_c = self.test_c
+
+        # if val is True:
+        #     test_x = test_x[:2000]
+        #     test_y = test_y[:2000]
+        #     test_c = self.test_c[:2000]
+        # else:
+        #     test_x = test_x[2000:]
+        #     test_y = test_y[2000:]
+        #     test_c = self.test_c[2000:]
 
         if group is not None:
             test_x = test_x[test_c == group]

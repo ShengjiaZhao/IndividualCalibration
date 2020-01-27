@@ -9,9 +9,10 @@ from models import *
 from utils import *
 import argparse
 import shutil
+import time
 
 parser = argparse.ArgumentParser()
-parser.add_argument('--run', type=int, default=500)
+parser.add_argument('--run', type=int, default=600)
 parser.add_argument('--gpu', type=int, default=0)
 parser.add_argument('--dataset', type=str, default='traffic')
 parser.add_argument('--coeff', type=float, default=1.0) # When coeff is 0 completely PAI loss, when 1 completely NLL loss
@@ -41,7 +42,12 @@ datasets = {'crime': CrimeDataset, 'traffic': TrafficDataset, 'toy': ToyDataset}
 
 
 def eval_extra(model, writer, logger):
-    for delta in [0.005, 0.007, 0.01, 0.02, 0.03, 0.04, 0.05]:
+    model.eval()
+    val_x, val_y = dataset.test_batch()
+    if args.recalibrate:
+        model.recalibrate(val_x, val_y)
+
+    for delta in [0.005, 0.007, 0.01, 0.02]:
         for loss_eps in [0.01, 0.02, 0.1, 0.5]:
             def decision_loss(y, a, thresh):
                 return (y < thresh).float() * a * (thresh - y) + \
@@ -84,7 +90,8 @@ def eval_extra(model, writer, logger):
     stddev_mc = eval_stddev(val_x, model)
     logger.write("stddev %f\n" % stddev_mc)
 
-for rep in range(100):
+start_time = time.time()
+for rep in range(200):
     dataset = datasets[args.dataset](device=device)
 
     # Create logging directory and create tensorboard and text loggers
@@ -116,73 +123,72 @@ for rep in range(100):
         optimizer.step()
 
         # Log training performance
-        if i % 10 == 0:
-            writer.add_scalar('cdf_l1', loss_cdf, global_step=i)
-            writer.add_scalar('stddev', loss_stddev, global_step=i)
-            writer.add_scalar('nll', loss_nll, global_step=i)
-            writer.add_scalar('total', loss, global_step=i)
+        if i % 1000 == 0:
+            print("Run %d Iteration %d, loss = %.3f, time elapsed=%.1f" % (args.run, i, loss, time.time() - start_time))
+            start_time = time.time()
 
+        # if i % 10 == 0:
+        #     writer.add_scalar('cdf_l1', loss_cdf, global_step=i)
+        #     writer.add_scalar('stddev', loss_stddev, global_step=i)
+        #     writer.add_scalar('nll', loss_nll, global_step=i)
+        #     writer.add_scalar('total', loss, global_step=i)
+
+        if i == 15000:
+            eval_extra(model, writer, logger)
         # Log test performance
-        if i % 100 == 0:
+        # if i % 100 == 0:
             # Computer test loss
-            model.eval()
-            with torch.no_grad():
-                val_x, val_y = dataset.test_batch()
-                _, loss_cdf, loss_stddev, loss_nll = model.eval_all(val_x, val_y)
-                loss = (1 - args.coeff) * loss_cdf + args.coeff * loss_nll
+            # model.eval()
+            # with torch.no_grad():
+            #     val_x, val_y = dataset.test_batch()
+            #     _, loss_cdf, loss_stddev, loss_nll = model.eval_all(val_x, val_y)
+            #     loss = (1 - args.coeff) * loss_cdf + args.coeff * loss_nll
+            #
+            # writer.add_scalar('cdf_l1_test', loss_cdf, global_step=i)
+            # writer.add_scalar('stddev_test', loss_stddev, global_step=i)
+            # writer.add_scalar('nll_test', loss_nll, global_step=i)
+            # writer.add_scalar('total_test', loss, global_step=i)
+            #
+            # # Early stop if at least 3k iterations and test loss does not improve on average in the past 1k iteration
+            # test_losses.append(loss.cpu().numpy())
+            # if False and len(test_losses) > 20 and np.mean(test_losses[-10:]) >= np.mean(test_losses[-20:-10]):
+            #     # Log the final test loss
+            #     logger.write("%d %f %f %f " % (i, loss, loss_nll, loss_stddev))
+            #
+            #     val_x, val_y = dataset.test_batch()
+            #     dloss, dthresh = compute_risk(val_x, val_y, model, loss_func=decision_loss, thresh=args.thresh)
+            #     logger.write("%f %f " % (dloss, dthresh))
+            #
+            #     # Compute the recalibration function if necessary
+            #     if args.recalibrate:
+            #         train_x, train_y = dataset.train_batch(2000)
+            #         model.recalibrate(train_x, train_y)
+            #     break
 
-            writer.add_scalar('cdf_l1_test', loss_cdf, global_step=i)
-            writer.add_scalar('stddev_test', loss_stddev, global_step=i)
-            writer.add_scalar('nll_test', loss_nll, global_step=i)
-            writer.add_scalar('total_test', loss, global_step=i)
+            # dloss, dthresh = compute_risk(val_x, val_y, model, loss_func=decision_loss, delta=args.delta, thresh=args.thresh,
+            #                               plot_func=lambda image: writer.add_image('decision_curve', image, i))
+            # writer.add_scalar('decision_loss', dloss, i)
+            # logger.write("%f " % (dloss))
 
-            # Early stop if at least 3k iterations and test loss does not improve on average in the past 1k iteration
-            test_losses.append(loss.cpu().numpy())
-            if False and len(test_losses) > 20 and np.mean(test_losses[-10:]) >= np.mean(test_losses[-20:-10]):
-                # Log the final test loss
-                logger.write("%d %f %f %f " % (i, loss, loss_nll, loss_stddev))
+            # dloss, dthresh = compute_risk(val_x, val_y, model, loss_func=decision_loss, delta=0.03, thresh=args.thresh)
+            # logger.write("%f " % (dloss))
 
-                val_x, val_y = dataset.test_batch()
-                dloss, dthresh = compute_risk(val_x, val_y, model, loss_func=decision_loss, thresh=args.thresh)
-                logger.write("%f %f " % (dloss, dthresh))
+            # dloss, dthresh = compute_risk(val_x, val_y, model, loss_func=decision_loss, thresh=args.thresh)
+            # writer.add_scalar('decision_loss_min', dloss, i)
+            # writer.add_scalar('decision_thresh_min', dthresh, i)
+            # logger.write("%f %f " % (dloss, dthresh))
 
-                # Compute the recalibration function if necessary
-                if args.recalibrate:
-                    train_x, train_y = dataset.train_batch(2000)
-                    model.recalibrate(train_x, train_y)
-                break
+            # train_x, train_y = dataset.train_batch()
+            # dloss, dthresh = compute_risk(train_x, train_y, model, loss_func=decision_loss, thresh=args.thresh)
+            # writer.add_scalar('decision_loss_train', dloss, i)
+            # writer.add_scalar('decision_thresh_train', dthresh, i)
+            # logger.write("%f %f\n" % (dloss, dthresh))
 
-                # dloss, dthresh = compute_risk(val_x, val_y, model, loss_func=decision_loss, delta=args.delta, thresh=args.thresh,
-                #                               plot_func=lambda image: writer.add_image('decision_curve', image, i))
-                # writer.add_scalar('decision_loss', dloss, i)
-                # logger.write("%f " % (dloss))
-
-                # dloss, dthresh = compute_risk(val_x, val_y, model, loss_func=decision_loss, delta=0.03, thresh=args.thresh)
-                # logger.write("%f " % (dloss))
-
-                # dloss, dthresh = compute_risk(val_x, val_y, model, loss_func=decision_loss, thresh=args.thresh)
-                # writer.add_scalar('decision_loss_min', dloss, i)
-                # writer.add_scalar('decision_thresh_min', dthresh, i)
-                # logger.write("%f %f " % (dloss, dthresh))
-
-                # train_x, train_y = dataset.train_batch()
-                # dloss, dthresh = compute_risk(train_x, train_y, model, loss_func=decision_loss, thresh=args.thresh)
-                # writer.add_scalar('decision_loss_train', dloss, i)
-                # writer.add_scalar('decision_thresh_train', dthresh, i)
-                # logger.write("%f %f\n" % (dloss, dthresh))
-
-            if i % 1000 == 0:
-                print("Iteration %d, loss = %.3f" % (i, loss))
-
-                val_x, val_y = dataset.test_batch()
-                if args.recalibrate:
-                    model.recalibrate(val_x, val_y)
-
-                # # Compute the worst case ECE score
-
-    args.run += 1
-
+            # # Compute the worst case ECE score
     eval_extra(model, writer, logger)
+    args.run += 1
+    logger.close()
+    # print("Running run number %d" % args.run)
     continue
 
 
